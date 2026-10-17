@@ -1,0 +1,14 @@
+{
+  "name": "atw306-ai-student-service",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Student support ticket portal - ATW306 group project",
+  "scripts": {
+    "mock-api": "prism mock docs/api/openapi.yaml -p 4010",
+    "lint-api": "redocly lint docs/api/openapi.yaml"
+  },
+  "devDependencies": {
+    "@redocly/cli": "^2.64.0",
+    "@stoplight/prism-cli": "^5.16.0"
+  }
+}

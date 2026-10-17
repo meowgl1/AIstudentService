@@ -1,0 +1,725 @@
+openapi: 3.0.3
+info:
+  title: ATW306 AI Student Service API
+  version: 0.1.0
+  description: >
+    Student support ticket portal. A student submits one ticket in one portal.
+    The system screens it, routes it, drafts a reply from the FAQ (RAG) with
+    sources, and a staff member reviews and approves every draft before the
+    student ever sees it. Sensitive tickets skip the AI draft and go straight
+    to a human. Spam is discarded.
+
+
+    Pipeline: ticket form -> backend rules (rate limit, validation, size
+    limits, duplicate check, no AI) -> screening (AI) -> routing (AI) -> RAG
+    draft with sources (AI) -> staff review and approval -> student sees the
+    reply.
+
+
+    Submission is asynchronous: POST /tickets returns immediately with a
+    ticket reference. The pipeline runs in the background. The student polls
+    GET /tickets/{ticketId}/status using the reference to see progress and,
+    once published, the reply.
+
+
+    MVP scope: lane B (AI draft, staff review) and lane C (human only). Lane A
+    (suggest-only) is a stretch goal and has no endpoints yet.
+
+
+    Staff endpoints have no authentication in this MVP (synthetic data only).
+    This is a known gap, not an oversight — see docs/definition-of-done.md.
+
+servers:
+  - url: http://localhost:3000
+    description: Local development
+
+security: []
+# Deliberately no auth scheme yet — staff endpoints are open in this MVP.
+# Synthetic data only. See docs/definition-of-done.md.
+
+tags:
+  - name: student
+    description: Public endpoints used by the ticket submission form and status page.
+  - name: staff
+    description: Internal endpoints used by the staff review dashboard. No auth yet.
+
+paths:
+  /tickets:
+    post:
+      tags: [student]
+      summary: Submit a new support ticket
+      description: >
+        Runs backend rules only (validation, size limits, rate limit,
+        duplicate check) before accepting. No AI runs in this request. The
+        screening/routing/drafting pipeline is triggered in the background
+        after acceptance.
+      operationId: createTicket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTicketRequest'
+      responses:
+        '202':
+          description: Ticket accepted. Pipeline processing started in the background.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TicketReference'
+        '422':
+          description: Validation failed (missing fields, body too long, invalid email).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: Duplicate ticket detected (same student, same content, recently submitted).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: Rate limit exceeded.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+                description: Seconds until the client may retry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+    get:
+      tags: [staff]
+      summary: List tickets (staff queue)
+      operationId: listTickets
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/TicketStatus'
+        - name: team
+          in: query
+          schema:
+            $ref: '#/components/schemas/SupportTeam'
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Paginated list of tickets.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/TicketSummary'
+                      meta:
+                        $ref: '#/components/schemas/PageMeta'
+        '422':
+          description: Invalid query parameter (bad status/team enum value, page or limit out of range).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /tickets/{ticketId}/status:
+    get:
+      tags: [student]
+      summary: Check ticket status (student-facing)
+      description: >
+        Minimal view. The ticket ID acts as the access token — unguessable
+        UUID, no login required. Returns the published reply only once
+        status is PUBLISHED.
+      operationId: getTicketStatus
+      parameters:
+        - $ref: '#/components/parameters/ticketId'
+      responses:
+        '200':
+          description: Current status, and the reply if published.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TicketStatusView'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /tickets/{ticketId}:
+    get:
+      tags: [staff]
+      summary: Get full ticket detail (staff-facing)
+      description: Includes the full pipeline trace — screening result, routing decision, draft, sources, review history.
+      operationId: getTicket
+      parameters:
+        - $ref: '#/components/parameters/ticketId'
+      responses:
+        '200':
+          description: Full ticket detail.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Ticket'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /tickets/{ticketId}/approve:
+    post:
+      tags: [staff]
+      summary: Approve the AI draft and publish it to the student
+      operationId: approveTicket
+      parameters:
+        - $ref: '#/components/parameters/ticketId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveRequest'
+      responses:
+        '200':
+          description: Draft published. Ticket moves to PUBLISHED.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Ticket'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Ticket is not in PENDING_REVIEW, cannot be approved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /tickets/{ticketId}/reject:
+    post:
+      tags: [staff]
+      summary: Reject the AI draft and escalate to a human
+      description: Rejecting never re-runs the AI automatically. The ticket moves to ESCALATED and a staff member must use the manual reply endpoint.
+      operationId: rejectTicket
+      parameters:
+        - $ref: '#/components/parameters/ticketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectRequest'
+      responses:
+        '200':
+          description: Ticket escalated. Moves to ESCALATED.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Ticket'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Ticket is not in PENDING_REVIEW, cannot be rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /tickets/{ticketId}/draft:
+    patch:
+      tags: [staff]
+      summary: Edit the AI draft before approving
+      operationId: editDraft
+      parameters:
+        - $ref: '#/components/parameters/ticketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditDraftRequest'
+      responses:
+        '200':
+          description: Draft updated. Ticket stays in PENDING_REVIEW.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Ticket'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Ticket is not in PENDING_REVIEW, draft cannot be edited.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /tickets/{ticketId}/reply:
+    post:
+      tags: [staff]
+      summary: Manually reply to an escalated ticket (lane C, no AI)
+      description: Only valid when the ticket is ESCALATED. Publishes the staff-written reply directly.
+      operationId: manualReply
+      parameters:
+        - $ref: '#/components/parameters/ticketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManualReplyRequest'
+      responses:
+        '200':
+          description: Reply published. Ticket moves to PUBLISHED.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Ticket'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Ticket is not ESCALATED, manual reply not applicable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+components:
+  parameters:
+    ticketId:
+      name: ticketId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    NotFound:
+      description: Ticket not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+
+  schemas:
+    TicketStatus:
+      type: string
+      description: >
+        RECEIVED -> SCREENING -> DISCARDED (spam, terminal)
+                               -> ESCALATED (sensitive, lane C)
+                               -> ROUTING -> DRAFTING -> PENDING_REVIEW -> APPROVED -> PUBLISHED (terminal)
+                                                                        -> REJECTED -> ESCALATED
+        ESCALATED -> PUBLISHED (via manual reply)
+      enum:
+        - RECEIVED
+        - SCREENING
+        - DISCARDED
+        - ROUTING
+        - DRAFTING
+        - PENDING_REVIEW
+        - ESCALATED
+        - PUBLISHED
+
+    SupportTeam:
+      type: string
+      description: Placeholder categories — refine once real Torrens support teams are confirmed.
+      enum:
+        - ACADEMIC
+        - IT
+        - ADMIN
+        - FINANCE
+        - STUDENT_SERVICES
+
+    CreateTicketRequest:
+      type: object
+      required: [studentName, studentEmail, subject, body]
+      properties:
+        studentName:
+          type: string
+          minLength: 1
+          maxLength: 120
+          example: Jordan Lee
+        studentEmail:
+          type: string
+          format: email
+          example: jordan.lee@student.torrens.edu.au
+        subject:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: Can't access my unit in Blackboard
+        body:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          example: >-
+            Hi, I enrolled in SWE302 last week but the unit isn't showing up
+            on my Blackboard dashboard. Can you help?
+
+    TicketReference:
+      type: object
+      properties:
+        ticketId:
+          type: string
+          format: uuid
+          example: a1b2c3d4-5e6f-7890-abcd-ef1234567890
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+      example:
+        ticketId: a1b2c3d4-5e6f-7890-abcd-ef1234567890
+        status: RECEIVED
+
+    TicketStatusView:
+      type: object
+      properties:
+        ticketId:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+        reply:
+          type: object
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/PublishedReply'
+      example:
+        ticketId: a1b2c3d4-5e6f-7890-abcd-ef1234567890
+        status: PUBLISHED
+        reply:
+          content: >-
+            Hi Jordan, new unit enrolments can take up to 24 hours to sync
+            with Blackboard. If it has been longer than that, contact IT
+            support with your student ID and unit code so they can check
+            the enrolment manually.
+          sources:
+            - title: Blackboard Access FAQ
+              sectionId: faq-blackboard-access
+              excerpt: >-
+                New enrolments can take up to 24 hours to sync with
+                Blackboard. If it has been longer than 24 hours, contact IT
+                support.
+          publishedAt: '2026-10-16T10:05:00Z'
+          publishedBy: Priya (Student Services)
+
+    TicketSummary:
+      type: object
+      properties:
+        ticketId:
+          type: string
+          format: uuid
+        subject:
+          type: string
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+        team:
+          type: string
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/SupportTeam'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      example:
+        ticketId: a1b2c3d4-5e6f-7890-abcd-ef1234567890
+        subject: Can't access my unit in Blackboard
+        status: PENDING_REVIEW
+        team: ACADEMIC
+        createdAt: '2026-10-16T09:00:00Z'
+        updatedAt: '2026-10-16T09:12:00Z'
+
+    ScreeningResult:
+      type: object
+      properties:
+        isSpam:
+          type: boolean
+        isSensitive:
+          type: boolean
+        isPromptInjectionAttempt:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+      example:
+        isSpam: false
+        isSensitive: false
+        isPromptInjectionAttempt: false
+        reason: null
+
+    Source:
+      type: object
+      properties:
+        title:
+          type: string
+        sectionId:
+          type: string
+        excerpt:
+          type: string
+      example:
+        title: Blackboard Access FAQ
+        sectionId: faq-blackboard-access
+        excerpt: >-
+          New enrolments can take up to 24 hours to sync with Blackboard. If
+          it has been longer than 24 hours, contact IT support.
+
+    Draft:
+      type: object
+      properties:
+        content:
+          type: string
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/Source'
+        draftedAt:
+          type: string
+          format: date-time
+      example:
+        content: >-
+          Hi Jordan, new unit enrolments can take up to 24 hours to sync
+          with Blackboard. If it has been longer than that, contact IT
+          support with your student ID and unit code so they can check the
+          enrolment manually.
+        sources:
+          - title: Blackboard Access FAQ
+            sectionId: faq-blackboard-access
+            excerpt: >-
+              New enrolments can take up to 24 hours to sync with
+              Blackboard. If it has been longer than 24 hours, contact IT
+              support.
+        draftedAt: '2026-10-16T09:12:00Z'
+
+    PublishedReply:
+      type: object
+      properties:
+        content:
+          type: string
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/Source'
+        publishedAt:
+          type: string
+          format: date-time
+        publishedBy:
+          type: string
+          description: Staff identifier. No auth yet, so this is a free-text name for the MVP.
+      example:
+        content: >-
+          Hi Jordan, new unit enrolments can take up to 24 hours to sync
+          with Blackboard. If it has been longer than that, contact IT
+          support with your student ID and unit code so they can check the
+          enrolment manually.
+        sources:
+          - title: Blackboard Access FAQ
+            sectionId: faq-blackboard-access
+            excerpt: >-
+              New enrolments can take up to 24 hours to sync with
+              Blackboard. If it has been longer than 24 hours, contact IT
+              support.
+        publishedAt: '2026-10-16T10:05:00Z'
+        publishedBy: Priya (Student Services)
+
+    Ticket:
+      type: object
+      properties:
+        ticketId:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+        studentName:
+          type: string
+        studentEmail:
+          type: string
+          format: email
+        subject:
+          type: string
+        body:
+          type: string
+        team:
+          type: string
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/SupportTeam'
+        screening:
+          type: object
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ScreeningResult'
+        draft:
+          type: object
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Draft'
+        reply:
+          type: object
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/PublishedReply'
+        reviewNote:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      example:
+        ticketId: a1b2c3d4-5e6f-7890-abcd-ef1234567890
+        status: PENDING_REVIEW
+        studentName: Jordan Lee
+        studentEmail: jordan.lee@student.torrens.edu.au
+        subject: Can't access my unit in Blackboard
+        body: >-
+          Hi, I enrolled in SWE302 last week but the unit isn't showing up
+          on my Blackboard dashboard. Can you help?
+        team: ACADEMIC
+        screening:
+          isSpam: false
+          isSensitive: false
+          isPromptInjectionAttempt: false
+          reason: null
+        draft:
+          content: >-
+            Hi Jordan, new unit enrolments can take up to 24 hours to sync
+            with Blackboard. If it has been longer than that, contact IT
+            support with your student ID and unit code so they can check
+            the enrolment manually.
+          sources:
+            - title: Blackboard Access FAQ
+              sectionId: faq-blackboard-access
+              excerpt: >-
+                New enrolments can take up to 24 hours to sync with
+                Blackboard. If it has been longer than 24 hours, contact IT
+                support.
+          draftedAt: '2026-10-16T09:12:00Z'
+        reply: null
+        reviewNote: null
+        createdAt: '2026-10-16T09:00:00Z'
+        updatedAt: '2026-10-16T09:12:00Z'
+
+    ApproveRequest:
+      type: object
+      properties:
+        reviewedBy:
+          type: string
+          description: Staff identifier (free text, no auth in MVP).
+
+    RejectRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+        reviewedBy:
+          type: string
+
+    EditDraftRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        editedBy:
+          type: string
+
+    ManualReplyRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        repliedBy:
+          type: string
+
+    Envelope:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data: {}
+        error:
+          type: string
+          nullable: true
+        meta:
+          type: object
+          nullable: true
+
+    ErrorEnvelope:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        data:
+          type: object
+          nullable: true
+        error:
+          type: string
+
+    PageMeta:
+      type: object
+      properties:
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
