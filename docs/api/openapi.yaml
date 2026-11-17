@@ -11,9 +11,17 @@ info:
 
 
     Pipeline: ticket form -> backend rules (rate limit, validation, size
-    limits, duplicate check, no AI) -> screening (AI) -> routing (AI) -> RAG
-    draft with sources (AI) -> staff review and approval -> student sees the
-    reply.
+    limits, duplicate check, no AI) -> screening (AI). Spam tickets are
+    discarded. Sensitive tickets and tickets whose screening requires human
+    review move to ESCALATED and skip AI drafting. Other tickets proceed to
+    routing (AI). If no team can be assigned confidently, the ticket moves to
+    NEEDS_ASSIGNMENT until staff assigns a team. The ticket then proceeds to
+    RAG-based drafting. If the FAQ sources support a reply, the AI creates a
+    draft and the ticket moves to PENDING_REVIEW. If the sources are
+    insufficient, the ticket moves to ESCALATED for a manual staff reply.
+    Staff review and approve AI drafts before publication. Staff reply
+    manually to escalated tickets. The student sees a reply only after it is
+    published.
 
 
     Submission is asynchronous: POST /tickets returns immediately with a
@@ -331,6 +339,39 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
 
+  /tickets/{ticketId}/team:
+    patch:
+      tags: [staff]
+      summary: Assign a support team to a ticket awaiting manual assignment
+      operationId: assignTicketTeam
+      parameters:
+        - $ref: '#/components/parameters/ticketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignTeamRequest'
+      responses:
+        '200':
+          description: Team assigned. Ticket moves to DRAFTING.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Ticket'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Ticket is not in NEEDS_ASSIGNMENT.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
 components:
   parameters:
     ticketId:
@@ -353,10 +394,17 @@ components:
     TicketStatus:
       type: string
       description: >
-        RECEIVED -> SCREENING -> DISCARDED (spam, terminal)
-                               -> ESCALATED (sensitive, lane C)
-                               -> ROUTING -> DRAFTING -> PENDING_REVIEW -> APPROVED -> PUBLISHED (terminal)
-                                                                        -> REJECTED -> ESCALATED
+        RECEIVED -> SCREENING
+        SCREENING -> DISCARDED (spam, terminal)
+                  -> ESCALATED (sensitive or screening requires human review)
+                  -> ROUTING
+        ROUTING -> DRAFTING (a team was assigned)
+                -> NEEDS_ASSIGNMENT (no team can be assigned confidently)
+        NEEDS_ASSIGNMENT -> DRAFTING (after staff assigns a team)
+        DRAFTING -> PENDING_REVIEW (FAQ information is sufficient)
+                  -> ESCALATED (retrieved FAQ information is insufficient)
+        PENDING_REVIEW -> PUBLISHED (staff approves the draft, terminal)
+                       -> ESCALATED (staff rejects the draft)
         ESCALATED -> PUBLISHED (via manual reply)
       enum:
         - RECEIVED
@@ -365,6 +413,7 @@ components:
         - ROUTING
         - DRAFTING
         - PENDING_REVIEW
+        - NEEDS_ASSIGNMENT
         - ESCALATED
         - PUBLISHED
 
@@ -487,6 +536,8 @@ components:
           type: boolean
         isPromptInjectionAttempt:
           type: boolean
+        needsHumanReview:
+          type: boolean
         reason:
           type: string
           nullable: true
@@ -494,6 +545,7 @@ components:
         isSpam: false
         isSensitive: false
         isPromptInjectionAttempt: false
+        needsHumanReview: false
         reason: null
 
     Source:
@@ -630,6 +682,7 @@ components:
           isSpam: false
           isSensitive: false
           isPromptInjectionAttempt: false
+          needsHumanReview: false
           reason: null
         draft:
           content: >-
@@ -723,3 +776,10 @@ components:
           type: integer
         limit:
           type: integer
+
+    AssignTeamRequest:
+      type: object
+      required: [team]
+      properties:
+        team:
+          $ref: '#/components/schemas/SupportTeam'
