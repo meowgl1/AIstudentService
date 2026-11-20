@@ -1,0 +1,27 @@
+/* Torrens styling. Load AFTER bootstrap.min.css. Never edit bootstrap.min.css.
+   Orange #FF5000 and grey #868686 are the Torrens brand colours. */
+:root {
+  --uni-primary: #1a1a1a;   /* near-black, like the Torrens website */
+  --uni-accent: #ff5000;    /* Torrens orange (use dark text on it for readability) */
+  --uni-grey: #868686;      /* Torrens grey */
+  --uni-bg: #f5f5f5;
+  --uni-font: "Helvetica Neue", Arial, sans-serif;
+}
+body { background: var(--uni-bg); font-family: var(--uni-font); }
+.navbar-uni { background: var(--uni-primary); border-bottom: 4px solid var(--uni-accent); }
+.btn-primary { --bs-btn-bg: var(--uni-primary); --bs-btn-border-color: var(--uni-primary);
+  --bs-btn-hover-bg: #333; --bs-btn-hover-border-color: #333; }
+.btn-accent { background: var(--uni-accent); color: #1a1a1a; border: none; font-weight: 600; }
+.btn-accent:hover { background: #e04600; color: #1a1a1a; }
+.card { border: none; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.ticket-row { cursor: pointer; }
+.ticket-row.active { background: #ffe8dc; }
+.badge-status { background: #6c757d; }
+.badge-PENDING_REVIEW, .badge-NEEDS_ASSIGNMENT { background: #d39e00; }
+.badge-ESCALATED { background: #b02a37; }
+.badge-PUBLISHED { background: #198754; }
+.badge-DISCARDED { background: #343a40; }
+.hero { background: var(--uni-primary); color: #fff; border-radius: .5rem; }
+.hero .lead { color: #ddd; }
+.step-num { width: 2rem; height: 2rem; border-radius: 50%; background: var(--uni-accent); color: #1a1a1a;
+  font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
