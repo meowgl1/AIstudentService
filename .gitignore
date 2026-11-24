@@ -7,4 +7,5 @@ build/
 *.log
 scratch/
 hub.json
-.claude/worktrees/
+CLAUDE.md
+.claude/
