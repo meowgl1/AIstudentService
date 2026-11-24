@@ -1,0 +1,10 @@
+# Render blueprint for the stub backend (src/server.ts) + static frontend.
+# ponytail: no DATABASE_URL/VOYAGE_API_KEY here yet - this stage is in-memory,
+# no DB, no AI. Add envVars (DATABASE_URL, VOYAGE_API_KEY) when RAG is wired in.
+services:
+  - type: web
+    name: aistudentservice
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run server

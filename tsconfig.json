@@ -8,5 +8,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["agent/src/**/*.ts", "shared/**/*.ts"]
+  "include": ["agent/src/**/*.ts", "shared/**/*.ts", "src/**/*.ts"]
 }
