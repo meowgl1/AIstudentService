@@ -6,3 +6,5 @@ dist/
 build/
 *.log
 scratch/
+hub.json
+.claude/worktrees/
