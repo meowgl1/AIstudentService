@@ -40,3 +40,28 @@ Easier: a clean 9-class routing problem with real labels, sensitive content neve
 touches the model. Harder: a folded long-tail team is a deliberate simplification; if
 real volumes demand it, splitting a team out later is a rename + relabel, not a
 redesign.
+
+## Amendment (2026-11-23)
+
+Grounding each team against real scraped page content during the RAG corpus build
+(`docs/rag-build-plan.md`, ADR 0009) surfaced two problems: `SUCCESS_COACH` had no real
+page of its own (its three `hub.json` leaves — Resume/CV, non-progression intervention,
+study planning — all lack a URL), while `ACADEMIC_SKILLS` and `LIBRARY_LEARNING`
+duplicated each other almost entirely (both pages cover APA referencing and academic
+integrity near-identically).
+
+Resolution: `ACADEMIC_SKILLS` is removed as a standalone value and folded into
+`SUCCESS_COACH`, which becomes the "complete coach" team — academic skill-building
+(writing, referencing, exam prep, PASS, tutoring) plus the original coaching scope
+(study habits, career/course alignment, non-progression, resume/CV). `LIBRARY_LEARNING`
+is narrowed to resource-finding only (databases, e-resources, subject guides, material
+requests); it no longer owns referencing/academic-integrity/AI-use content.
+
+`SupportTeam` is now 8 values:
+
+`STUDENT_SERVICES` · `STUDENT_FINANCE` · `LIBRARY_LEARNING` · `SUCCESS_COACH` ·
+`ACCESSIBILITY` · `CAMPUS_LIFE` · `WIL_PLACEMENT` · `IT_SUPPORT`
+
+Not yet applied downstream: the ADR 0004 routing rubric relabels its Academic-Skills
+golden-set examples as Success Coach; `openapi.yaml`'s `SupportTeam` enum drops
+`ACADEMIC_SKILLS`.

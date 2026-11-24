@@ -8,7 +8,17 @@
     "lint-api": "redocly lint docs/api/openapi.yaml"
   },
   "devDependencies": {
+    "@mozilla/readability": "^0.6.0",
     "@redocly/cli": "^2.64.0",
-    "@stoplight/prism-cli": "^5.16.0"
+    "@stoplight/prism-cli": "^5.16.0",
+    "@types/node": "^26.6.6",
+    "@types/pg": "^8.23.1",
+    "jsdom": "^31.0.1",
+    "tsx": "^4.23.15",
+    "turndown": "^7.2.5",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "pg": "^8.23.1"
   }
 }
